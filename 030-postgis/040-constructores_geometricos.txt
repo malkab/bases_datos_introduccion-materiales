@@ -1,0 +1,311 @@
+-- -----
+-- Constructores geométricos
+-- -----
+
+
+
+-- Transformaciones de coordenadas: transforma la geometría g al sistema de
+-- referencia EPSG epsg (las transformaciones se basan en los estándares de la
+-- librería PROJ4 (OSGEO - Open Source Geospatial Foundation)
+
+-- geometry st_transform(geometry g, integer epsg)
+
+SELECT
+    id_especie, fecha, st_transform(geom, 4326)  AS geom_wgs84_geo
+FROM
+    infraestructuras.especies_observadas
+LIMIT 20;
+
+-- Asignación de sistema de referencia a geometría: asigna el sistema de
+-- referencia EPSG epsg a la geometría g.
+
+-- ¡OJO! No implica reproyección. Es útil cuando la fuente de información, por
+-- ejemplo un shape, no trae sistema de coordenadas definido.
+
+-- geometry st_setsrid(geometry g, integer epsg)
+
+-- Centroide: devuelve el centroide de un polígono (es el centro de masa del
+-- polígono y puede no estar dentro del polígono ya que depende de su forma)
+
+-- geometry st_centroid(geometry g)
+
+-- Punto sobre superficie: devuelve un punto que está dentro de un
+-- polígono,garantizado
+
+-- geometry st_pointonsurface(geometry g)
+
+--Esta consulta genera los centroides y los puntos sobre los centroides garantizados.
+
+CREATE OR REPLACE VIEW analisis.vw__zp_puntos AS
+SELECT
+    id_zona_proteccion,
+    st_centroid(geom) AS centroide,
+    st_pointonsurface(geom) AS punto_en_superficie
+FROM
+    infraestructuras.zona_proteccion;
+
+
+-- Buffers: zona de influencia poligonal de la geometría g a partir de un radio
+-- definido por las unidades de distancia
+
+-- geometry st_buffer(geometry geom, float radio)
+
+-- Crea una vista generando 3 nuevas geometrías con los buffer definidos por los
+-- radios 1000, 2500 y 5000
+
+CREATE OR REPLACE VIEW analisis.vw__enp_buffer_1000_2500_5000 AS
+SELECT
+    id_enp,
+    nombre,
+    st_buffer(geom, 1000) AS buffer_1000,
+    st_buffer(geom, 2500) AS buffer_2500,
+    st_buffer(geom, 5000) AS buffer_5000
+FROM
+    infraestructuras.enp;
+
+
+-- Contorno: obtener el contorno del polígono g como (MULTI)LINESTRING
+
+-- geometry st_boundary(geometry g)
+
+-- Crea una vista generando una geometría poligonal que es el perímetro de cada
+-- espacio natural protegido
+
+CREATE OR REPLACE VIEW analisis.vw__enp_limite AS
+SELECT
+    id_enp,
+    nombre,
+    st_boundary(geom) AS geom
+FROM
+    infraestructuras.enp;
+
+
+-- Nodos de LINESTRINGS: devuelven los puntos iniciales y finales de la
+-- LINESTRING g (exclusivamente LINESTRING, no MULTI)
+
+-- geometry st_startpoint(geometry g)
+-- geometry st_endpoint(geometry g)
+
+-- Crea una vista con los nodos inicales y los nodos finales de los itinerarios
+
+CREATE OR REPLACE VIEW analisis.vw__itinerarios_nodos AS
+SELECT
+    id_itinerario,
+    nombre,
+    st_startpoint((st_dump(geom)).geom) AS geom_start,
+    st_endpoint((st_dump(geom)).geom) AS geom_end
+FROM
+    infraestructuras.itinerario;
+
+
+-- -----
+-- Constructores de geometrías
+-- -----
+
+-- Creación de puntos: creación de un punto de coordenadas x,y
+
+-- geometry st_makepoint(double precision x, double precision y)
+
+-- La función generate_series devuelve una secuencia numérica a intervalos.
+
+-- SELECT generate_series(0, 100, 10);
+
+-- Podemos utilizarla para generar series numéricas automáticamente
+
+-- La siguiente consulta genera una retícula de coordenadas UTM
+
+CREATE OR REPLACE  VIEW analisis.mvw__reticula_utm_5000m AS
+SELECT
+    row_number() OVER () AS gid,
+    x, y,
+    st_setsrid(st_makepoint(x, y), 23030) AS geom
+FROM
+    generate_series(179000, 322000, 5000) x,
+    generate_series(3992000, 4101000, 5000) y;
+
+
+-- Creación de líneas: creación de una línea desde la geometría punto p1 a la geometría punto p2
+
+-- geometry st_makeline(geometry p1, geometry p2)
+
+-- Crea una vista con la retícula UTM final
+
+CREATE OR REPLACE VIEW analisis.vw__mosaico AS
+WITH limites as (
+	SELECT MIN (st_xmin (geom)) as x_min, MAX (st_xmax (geom)) as x_max,
+MIN (st_ymin (geom)) as y_min, MAX (st_ymax (geom)) as y_max
+FROM analisis.mvw__reticula_utm_5000m),
+
+lon_min_select as (
+SELECT ROW_NUMBER () OVER (ORDER BY st_y (a.geom)) as gid,
+st_x (a.geom) as longitud, st_y (a.geom) as latitud, a.geom
+FROM analisis.mvw__reticula_utm_5000m a, limites b
+WHERE st_x (a.geom)=b.x_min),
+
+lon_max_select as (
+SELECT ROW_NUMBER () OVER (ORDER BY st_y (a.geom)) as gid,
+st_x (a.geom) as longitud, st_y (a.geom) as latitud, a.geom
+FROM analisis.mvw__reticula_utm_5000m a, limites b
+WHERE st_x (a.geom)=b.x_max),
+
+lat_min_select as (
+SELECT ROW_NUMBER () OVER (ORDER BY st_x (a.geom)) as gid,
+st_x (a.geom) as longitud, st_y (a.geom) as latitud, a.geom
+FROM analisis.mvw__reticula_utm_5000m a, limites b
+WHERE st_y (a.geom)=b.y_min),
+
+lat_max_select as (
+SELECT ROW_NUMBER () OVER (ORDER BY st_y (a.geom)) as gid,
+st_x (a.geom) as longitud, st_y (a.geom) as latitud, a.geom
+FROM analisis.mvw__reticula_utm_5000m a, limites b
+WHERE st_y (a.geom)=b.y_max)
+
+
+SELECT a.gid, st_setsrid (st_makeline (a.geom, b.geom),23030) as geom
+FROM lon_min_select a INNER JOIN lon_max_select B ON a.gid=b.gid
+
+UNION
+
+SELECT a.gid, st_setsrid (st_makeline (a.geom, b.geom),23030) as geom
+FROM lat_min_select a INNER JOIN lat_max_select B ON a.gid=b.gid;
+
+
+-- -----
+-- Constructores booleanos: diferencia, intersección y unión de geometrías
+-- -----
+
+-- Diferencia: resta de la geometría g2 de la g1
+
+-- geometry st_difference(geometry g1, geometry g2)
+
+-- Intersección: intersección de geometrías g1 y g2
+
+-- geometry st_intersection(geometry g1, geometry g2)
+
+-- Unión: unión de las geometrías g1 y g2
+
+-- geometry st_union(geometry g1, geometry g2)
+
+-- Crea una vista con dos buffers sobre los itinerarios, uno de 500 y otro de
+-- 1000 metros y computar geométricamemente (construir una geometría nueva) la
+-- diferencia espacial entre los dos buffers (o lo que es lo mismo, la zona
+-- entre los 500 y los 1000 metros de radio)
+
+CREATE VIEW analisis.vw__buffers_iti_anillos AS
+WITH buffers AS (
+    SELECT
+        st_buffer(geom, 500) AS geom_buff_500,
+        st_buffer(geom, 1000) AS geom_buff_1000
+    FROM
+        infraestructuras.itinerario
+)
+SELECT
+    row_number() over () AS gid,
+    st_difference(geom_buff_1000, geom_buff_500) AS anillo
+FROM buffers;
+
+-- Crea una vista con la unión espacial de las zonas de buffer calculadas en la vista anterior (dissolve)
+
+CREATE VIEW analisis.vw__buffers_iti_anillos_union AS
+SELECT
+    1 AS gid,
+    st_union(anillo) AS geom
+FROM
+    analisis.vw__buffers_iti_anillos;
+
+-- Crea una vista con las zonas intersectadas del área de influencia de 500
+-- metros alrededor de los caminos (buffer de 500 m) y el área de influencia de
+-- 200 metros alrededor de las coordenadas de avistamientos de aves para conocer
+-- las zonas alrededor de los caminos donde han sido vistas aves.
+
+CREATE VIEW analisis.avistamientos_itinerarios AS
+WITH buffer_itinerarios AS (
+SELECT 1 as gid, st_union (st_buffer (geom, 500)) as geom
+FROM infraestructuras.itinerario),
+
+buffer_avistamientos AS (
+SELECT row_number () OVER () as gid, id_especie, st_buffer (geom, 200) as geom
+FROM infraestructuras.especies_observadas)
+
+SELECT row_number () OVER (ORDER BY b.id_especie),  st_intersection (a.geom, b.geom) as geom
+FROM buffer_itinerarios a inner join buffer_avistamientos b ON st_intersects (a.geom, b.geom)
+
+-- Otra pregunta, crea una vista con el área total de influencia de 200 metros
+-- alrededor de los avistamientos que coinciden con la zona de influencia de 500
+-- metros alrededor de los camninos, pero agrupadas espacialmente por especies.
+
+CREATE or replace VIEW analisis.avistamientos_itinerarios_union AS
+WITH buffer_itinerarios AS (
+SELECT 1 as gid, st_union (st_buffer (geom, 500)) as geom
+FROM infraestructuras.itinerario),
+
+buffer_avistamientos AS (
+SELECT row_number () OVER () as gid, id_especie, st_buffer (geom, 200) as geom
+FROM infraestructuras.especies_observadas)
+
+SELECT row_number () OVER (ORDER BY b.id_especie) as gid , b.id_especie,
+st_union (st_intersection (a.geom, b.geom)) as geom
+FROM buffer_itinerarios a INNER JOIN buffer_avistamientos b ON st_intersects (a.geom, b.geom)
+GROUP BY b.id_especie;
+
+-- Si queremos conocer el área total de avistamientos dentro del área de
+-- influencia de los 500 metros alrdedor de los itinerarios:
+
+CREATE or replace VIEW analisis.avistamientos_itinerarios_union_area AS
+WITH buffer_itinerarios AS (
+SELECT 1 as gid, st_union (st_buffer (geom, 500)) as geom
+FROM infraestructuras.itinerario),
+
+buffer_avistamientos AS (
+SELECT 1 as gid, st_buffer (geom, 200) as geom
+FROM infraestructuras.especies_observadas)
+
+SELECT 1 as gid , st_union (st_intersection (a.geom, b.geom)) as geom,
+st_area (st_union (st_intersection (a.geom, b.geom)))/10000 as area_avistamientos
+FROM buffer_itinerarios a, buffer_avistamientos b;
+
+-- Si queremos conocer el área total de avistamientos por especie dentro del
+-- área de influencia de los 500 metros alrdedor de los itinerarios, pero
+-- agrupado el cálculo por especies:
+
+CREATE or replace VIEW analisis.avistamientos_itinerarios_union_especies AS
+WITH buffer_itinerarios AS (
+    SELECT
+        1 as gid,
+        st_union (st_buffer (geom, 500)) as geom
+    FROM infraestructuras.itinerario
+),
+
+buffer_avistamientos AS (
+    SELECT
+        row_number () OVER () as gid,
+        id_especie,
+        st_buffer (geom, 200) as geom
+    FROM infraestructuras.especies_observadas
+)
+
+SELECT
+    row_number () OVER (ORDER BY b.id_especie) as gid,
+    b.id_especie,
+    st_union (st_intersection (a.geom, b.geom)) as geom,
+    st_area (st_union (st_intersection (a.geom, b.geom)))/10000 as area
+FROM
+    buffer_itinerarios a INNER JOIN
+    buffer_avistamientos b ON st_intersects (a.geom, b.geom)
+GROUP BY b.id_especie;
+
+-- Calcular la infraestructura más cercana (a un límite de 2500 metros) a cada
+-- uno de los puntos de avistamiento e indicarlo con una línea que una el punto
+-- de avistamiento con el centroide de la infraestructura.
+
+create view analisis.l_inf_obs as
+select distinct on (id_especies_observadas)
+	id_especies_observadas,
+	id_infraestructura,
+	st_distance(a.geom_poly, b.geom) as d,
+	st_setsrid(st_makeline(st_centroid(a.geom_poly), b.geom), 23030) as geom
+from
+	infraestructuras.infraestructura a inner join
+	infraestructuras.especies_observadas b on st_dwithin(a.geom_poly, b.geom, 2500)
+order by
+	id_especies_observadas, d asc;

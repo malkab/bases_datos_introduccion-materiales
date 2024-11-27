@@ -1,0 +1,69 @@
+/*
+
+    -----
+    Columnas geométricas
+    -----
+
+    Obtención de la tabla de metadatos de las capas geométricas (sistema espacial
+    de referencia soportados por el sistema -- y capas con geometría existente en
+    la BD y collumnas que almacenan las geometrías).
+
+*/
+
+SELECT * FROM public.spatial_ref_sys;
+
+SELECT * FROM public.geometry_columns;
+
+
+/*
+
+    -----
+    Funciones PostGIS de exploración de columnas geométricas
+    -----
+
+    Tipo de geometría presente en una columna geométrica
+
+    text st_geometrytype(geometry g1);
+
+*/
+
+SELECT st_geometrytype(geom) FROM infraestructuras.enp;
+
+SELECT DISTINCT st_geometrytype(geom) FROM infraestructuras.enp;
+
+/*
+
+    Sistema de referencia de una columna geométrica
+
+    integer st_srid(geometry g1);
+
+*/
+
+SELECT DISTINCT st_srid(geom) FROM infraestructuras.enp;
+
+
+/*
+
+    -----
+    Estructura interna del tipo geometry
+    -----
+
+    Con la siguiente consulta podemos ver cómo se almacena la geometría
+    en la base de datos en formato binario y su representación en un
+    estándar del Open Geospatial Consortium llamado Extended Well Known
+    Text (EWKT). El formato binario es lo que maneja PostGIS directamente,
+    el EWKT existe para ayudar a las personas a interpretar qué está
+    ocurriendo en el interior de la geometría binaria.
+
+    La función st_asewkt tiene como parámetro un campo geométrico y
+    devuelve como resultado la representación de dicha geometría en EWKT.
+
+    text st_asewkt(geometry g1);
+
+*/
+
+SELECT
+    geom AS geom_binario,
+    st_asewkt(geom) AS geom_ewkt
+FROM infraestructuras.enp
+WHERE id_enp=9;

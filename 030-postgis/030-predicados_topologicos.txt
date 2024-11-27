@@ -1,0 +1,203 @@
+-- -----
+-- Predicados topológicos
+-- -----
+
+-- Se define predicado topológico como la función que evalúa la relación
+-- espacial (topológica) entre geometrías.
+
+-- Devuelven verdadero o falso y se aplican a funciones predicativas de SQL
+-- (WHERE, JOIN,...)
+
+-- Distancia límite: devuelve 'verdadero' si las geometrías están a menos de una
+-- distancia objetivo la una de la otra
+
+-- bool st_dwithin(geometry g1, geometry g2, doble distancia)
+
+-- Genera una vista espacial con los avistamientos de aves que están dentro de
+-- un radio de 5 Kms alreddedor de la infraestructura con id=121.
+
+-- Para ello vamos a crear un esquema nuevo de análisis donde estarán las vistas
+-- con geometría que vamos a poder visualizar en QGIS
+
+-- Crea por tanto el nuevo esquema:
+
+CREATE SCHEMA analisis;
+
+ -- Creamos la vista espacial con los avistamientos:
+
+CREATE VIEW analisis.vw__esp_obs_inf_121_5000m AS
+SELECT
+    a.*,
+    st_distance(a.geom, b.geom_poly) AS distancia
+FROM
+    infraestructuras.especies_observadas a, infraestructuras.infraestructura b
+WHERE
+    st_dwithin(a.geom, b.geom_poly, 5000) and id_infraestructura=121;
+
+
+-- Contención: devuelve 'verdadero' si la geometría 1 contiene a la geometría 2
+
+-- bool st_contains(geometry g1, geometry g2);
+
+-- Crea una vista que contenga al conjunto de infraestructuras que son
+-- contenidas por la zona de protección con id=30
+
+CREATE VIEW analisis.vw__inf_zona_30 AS
+SELECT
+    a.*
+FROM
+    infraestructuras.infraestructura a, infraestructuras.zona_proteccion b
+WHERE
+    st_contains(b.geom, a.geom_poly) and b.id_zona_proteccion=30;
+
+
+-- Contención: devuelve 'verdadero' si la geometría 1 está dentro de 2
+
+-- bool st_within(geometry g1, geometry g2)
+
+-- Crea una vista como la anterior pero definida con el predicado opuesto: vista
+-- que contenga al conjunto de infraestructuras que están dentro de la zona de
+-- protección con id=30
+
+CREATE VIEW analisis.vw__inf_zona_30b AS
+SELECT
+    a.*
+FROM
+    infraestructuras.infraestructura a, infraestructuras.zona_proteccion b
+WHERE
+    st_within(a.geom_poly, b.geom) and b.id_zona_proteccion=30;
+
+
+-- Los predicados topológicos también pueden aplicarse a la generación de joins
+-- espaciales (topológicos). Estos join espaciales llaman a columnas de más de
+-- una tabla garantizando la integridad referencial de los registros a partir de
+-- la evaluación de un predicado topológico en lugar de uno alfanumérico basado
+-- en la igualdad de claves
+
+-- Esta consulta usando el predicado st_contains genera un  INNER JOIN
+--topológico que añadiendo a los campos de las infraestructuras la información
+--de las zonas de protección que las contienen
+
+CREATE VIEW analisis.vw__inf_datos_zona AS
+SELECT
+    a.id_infraestructura,
+    a.nombre,
+    b.id_zona_proteccion,
+    b.id_categoria_proteccion,
+    b.afluencia,
+    a.geom_poly
+FROM
+    infraestructuras.infraestructura a INNER JOIN
+    infraestructuras.zona_proteccion b ON
+    st_contains(b.geom, a.geom_poly);
+
+
+-- Recubrimiento: devuelve 'verdadero' si la geometría 1 está recubierta
+-- completamente por 2
+
+-- bool st_coveredby(geometry g1, geometry g2);
+
+-- Crea una vista que contenga al conjunto de infraestructuras que son
+-- recubiertas por la zona de protección con id=30
+
+CREATE VIEW analisis.vw__inf_covered_by_zona_30 AS
+SELECT
+    a.*
+FROM
+    infraestructuras.infraestructura a, infraestructuras.zona_proteccion b
+WHERE
+    st_coveredby(a.geom_poly, b.geom) and b.id_zona_proteccion=30;
+
+
+-- Disjunción: devuelve 'verdadero' si la geometría 1 y la geometría 2 son
+-- disjuntas
+
+-- bool st_disjoint(geometry g1, geometry g2)
+
+-- Crea una vista con los Espacios Naurales Protegidos que son disjuntos; es
+-- decir que no comparten ninguna frontera con niguno de los demás.
+
+CREATE VIEW analisis.vw__enp_disjoint_enp AS
+SELECT
+    a.*, b.nombre as nombre_enp
+FROM
+    infraestructuras.enp a, infraestructuras.enp  b
+WHERE
+    st_disjoint(a.geom, b.geom) and a.id_enp<>b.id_enp;
+
+-- Prueba la siguiente consulta y observa los resultados (muestra aquellos ENP
+-- que comparten frontera:
+
+SELECT
+    a.*, b.nombre
+FROM
+    infraestructuras.enp a, infraestructuras.enp  b
+WHERE NOT
+    st_disjoint(a.geom, b.geom) and a.id_enp<>b.id_enp;
+
+
+-- Contacto: devuelve 'verdadero' si las geometrías 1 y 2 se tocan
+
+-- bool st_touches(geometry g1, geometry g2)
+
+-- Crea una vista con los Espacios Naurales Protegidos que tocan a otros ENP.
+
+CREATE VIEW analisis.vw__enp_touches_enp AS
+SELECT
+    a.*, b.nombre as nombre_enp
+FROM
+    infraestructuras.enp a, infraestructuras.enp  b
+WHERE
+    st_touches(a.geom, b.geom) and a.id_enp<>b.id_enp;
+
+-- Intersección: devuelve 'verdadero' si las geometrías 1 y 2 intersectan de
+-- cualquier manera
+
+-- bool st_intersects(geometry g1, geometry g2)
+
+-- Genera una vista espacial donde se muestren las zonas de protección y los
+-- campos de los itinerarios que cruzan esas zonas de protección.
+
+-- Esta operación es un join espacial. Oberva que incorporamos el campo gid
+-- (identificador único) a partir de la expresión row_number() over (ORDER BY
+-- )as gid.
+
+-- Este campo es básico para generar un campo unívoco garantizado ya que para
+-- QGIS la presencia de un campo de esas características es de obligado
+-- cumplimiento. La función row_number() genera una secuencia de números enteros
+-- otorgando a cada registro el número de fila en la que se encuentra a partir
+-- de un patrón de ordenación OVER (ORDER BY campo). En las operaciones de
+-- intersección este campo gid es obligatorio ya que, por la propia
+-- característica del algoritmo, un polígono puede intersectar con dos partes
+-- diferentes de otro polígono, generando por tanto dos geometrías diferentes
+-- que van a tener los mismos identificadores originales de ambas tablas de
+-- atributos (ver dibujo del ppt algoritmos espaciales).
+
+CREATE VIEW analisis.vw__zp_inter_iti AS
+SELECT
+    row_number() over (ORDER BY b.id_itinerario, a.id_zona_proteccion) as gid,
+    a.id_zona_proteccion,
+    b.id_itinerario,
+    b.nombre,
+    b.geom
+FROM
+    infraestructuras.zona_proteccion a INNER JOIN
+    infraestructuras.itinerario b ON
+    st_intersects(a.geom, b.geom)
+ORDER BY
+    b.id_itinerario, a.id_zona_proteccion;
+
+
+-- -----
+-- Análogas a todas las anteriores:
+-- -----
+
+-- Solapamiento: devuelve 'verdadero' si las geometrías 1 y 2 solapan
+
+-- bool st_overlaps(geometry g1, geometry g2)
+
+
+-- Contención completa: devuelve 'verdadero' si la geometría 1 contiene
+-- complememente la geometría 2 (sin contar contactos con el perímetro)
+
+-- bool st_containsproperly(geom1 geometry, geom2 geometry)

@@ -1,0 +1,133 @@
+-- En esta sección vamos a comenzar a ver funciones analíticas PostGIS.
+
+-- Las vamos a clasificar en grupos funcionales cada vez más complejos.
+
+-- El primer grupo son las funciones escalares. Las funciones escalares se
+-- caracterizan por operar sobre una geometría y devolver una medición, un
+-- número (un escalar).
+
+
+
+-- Funciones escalares sobre geometrías
+
+-- Área: devuelve el Área de la geometrí­a
+
+-- double st_area(geometry o geography g1);
+
+-- Calcula una vista con el id del espacio natural, su nombre y el área
+-- (proyectada)que ocupa.
+
+SELECT
+    id_enp,
+    nombre,
+    st_area(geom) AS area
+FROM
+    infraestructuras.enp;
+
+-- Calcula una vista con el id del espacio natural, su nombre y el área (sobre
+-- coordenadas esféricas)que ocupa.
+
+SELECT nombre, st_area (geography(st_transform (geom, 4326))) as area_geografica
+FROM  infraestructuras.enp;
+
+-- Longitud: devuelve la longitud de las linestrings
+
+-- double st_length(geometry g1);
+
+--Calcula una vista con el id del itinerario, su nombre y su longitud.
+
+SELECT
+    id_itinerario,
+    nombre,
+    st_length(geom) AS longitud
+FROM
+    infraestructuras.itinerario
+LIMIT 20;
+
+
+-- Perímetro: devuelve el perímetro de los polígonos
+
+-- double st_perimeter(geometry g1);
+
+--  Calcula una vista con el id del espacio natural, su nombre y la longitud de
+--  su perímetro.
+
+SELECT
+    id_enp,
+    nombre,
+    st_perimeter(geom) AS perimetro
+FROM
+    infraestructuras.enp;
+
+
+-- Coordenadas x e y de puntos. Deveulve el par de corodenadas que definen elementos puntuales
+
+-- double st_x(geometry g1);
+-- double st_y(geometry g1);
+
+--Calcula una vista con el id de la observación del ave y las coordenadas x e y de la posición de avistamiento a partir de la geometría.
+
+SELECT
+    id_especies_observadas,
+    id_especie,
+    st_x(geom) AS x,
+    st_y(geom) AS y
+FROM
+    infraestructuras.especies_observadas
+LIMIT 5;
+
+
+-- Límites de extensión de una geometría
+
+-- double st_xmin(geometry g1);
+-- double st_ymax(geometry g1);
+-- double st_ymin(geometry g1);
+-- double st_xmax(geometry g1);
+
+-- Calcula una vista con el id del espacio natural y las coordenadas x e y
+-- máximas y mínimas que cada espacio natural ocupa.
+
+SELECT
+    id_enp,
+    nombre,
+    st_xmin(geom) AS xmin,
+    st_xmax(geom) AS xmax,
+    st_ymin(geom) AS ymin,
+    st_ymax(geom) AS xmax
+FROM
+    infraestructuras.enp;
+
+-- Distancia: devuelve la distancia entre dos geometrías
+
+-- Devuelve la distancia más pequeña entre los vértices que componen las
+-- geometrías :
+
+-- float st_distance(geometry g1, geometry g2)
+
+-- Devuelve la distancia más alejada entre los vértices que componen las
+-- geometrías:
+
+-- float st_maxdistance(geometry g1, geometry g2)
+
+-- Calcula una vista que muestre la distancia y la distancia máxima del espacio
+-- natural protegido (enp) con id=2 al resto de ENP
+
+WITH enp_2 AS (
+    SELECT
+        id_enp,
+        nombre,
+        geom
+    FROM
+        infraestructuras.enp
+    WHERE
+        id_enp=2
+)
+SELECT
+    a.id_enp AS gid_a,
+    b.id_enp AS gid_b,
+    a.nombre AS nombre_a,
+    b.nombre AS nombre_b,
+    st_distance(a.geom, b.geom) AS d_min,
+    st_maxdistance(a.geom, b.geom) AS d_max
+FROM
+    infraestructuras.enp a, enp_2 b;
